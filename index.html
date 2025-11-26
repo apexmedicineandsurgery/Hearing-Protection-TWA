@@ -1,0 +1,385 @@
+import React, { useState, useMemo } from 'react';
+import { Volume2, Volume1, Clock, Shield, BookOpen, RefreshCcw } from 'lucide-react';
+
+const TwaCalculator = () => {
+  // Simulator State
+  const [sourceLevel, setSourceLevel] = useState(95);
+  const [duration, setDuration] = useState(60); // minutes
+  const [protection, setProtection] = useState(0); // dB reduction
+
+  // --- Calculations ---
+
+  const STANDARDS = {
+    osha: {
+      name: 'OSHA',
+      subtext: 'Regulatory (Mandatory)',
+      criterionLevel: 90,
+      exchangeRate: 5,
+      color: 'blue',
+      desc: 'Uses a 5dB exchange rate, meaning allowable time halves every 5dB increase.'
+    },
+    niosh: {
+      name: 'NIOSH',
+      subtext: 'Scientific (Recommended)',
+      criterionLevel: 85,
+      exchangeRate: 3,
+      color: 'purple',
+      desc: 'Uses a 3dB exchange rate, meaning allowable time halves every 3dB increase.'
+    }
+  };
+
+  // The level actually reaching the ear
+  const effectiveLevel = Math.max(0, sourceLevel - protection);
+
+  // Calculate allowable time (Hours) for a specific dB level
+  const getAllowableTime = (db, stdKey) => {
+    const std = STANDARDS[stdKey];
+    // Formula: T = 8 / (2 ^ ((L - CL) / ER))
+    const exponent = (db - std.criterionLevel) / std.exchangeRate;
+    return 8 / Math.pow(2, exponent);
+  };
+
+  // Helper to format hours into readable text
+  const formatTime = (hours) => {
+    if (hours >= 24) return "> 24h";
+    if (hours < 0.001) return "< 1s"; 
+    
+    const totalMinutes = Math.round(hours * 60);
+    if (totalMinutes < 1) {
+       const seconds = Math.round(hours * 3600);
+       return `${seconds}s`;
+    }
+    if (totalMinutes < 60) return `${totalMinutes}m`;
+    
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    return `${h}h ${m}m`;
+  };
+
+  // Calculate Dose % for a single event
+  const calculateDose = (db, durationMins, stdKey) => {
+    const allowedHours = getAllowableTime(db, stdKey);
+    const actualHours = durationMins / 60;
+    return (actualHours / allowedHours) * 100;
+  };
+
+  // --- Derived State ---
+
+  const stats = useMemo(() => {
+    return {
+      osha: {
+        maxTime: getAllowableTime(effectiveLevel, 'osha'),
+        currentDose: calculateDose(effectiveLevel, duration, 'osha')
+      },
+      niosh: {
+        maxTime: getAllowableTime(effectiveLevel, 'niosh'),
+        currentDose: calculateDose(effectiveLevel, duration, 'niosh')
+      }
+    };
+  }, [effectiveLevel, duration]);
+
+  // --- Helper Components ---
+  
+  const SliderMarkers = ({ min, max, markers }) => {
+    return (
+      <div className="relative w-full h-6 mt-2 pointer-events-none">
+        {markers.map((marker) => {
+          const percent = ((marker.value - min) / (max - min)) * 100;
+          return (
+            <div 
+              key={marker.label}
+              className="absolute transform -translate-x-1/2 flex flex-col items-center"
+              style={{ left: `${percent}%` }}
+            >
+              <div className="w-0.5 h-1.5 bg-slate-300 mb-1"></div>
+              <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap text-center leading-tight">
+                {marker.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const StandardCard = ({ type, data }) => {
+    const std = STANDARDS[type];
+    const isSafe = data.currentDose <= 100;
+    const barColor = type === 'osha' ? 'bg-blue-600' : 'bg-purple-600';
+    const textColor = type === 'osha' ? 'text-blue-700' : 'text-purple-700';
+    const borderColor = type === 'osha' ? 'border-blue-200' : 'border-purple-200';
+    const bgColor = type === 'osha' ? 'bg-blue-50' : 'bg-purple-50';
+
+    return (
+      <div className={`flex flex-col h-full bg-white rounded-xl shadow-sm border-2 ${borderColor} overflow-hidden transition-all duration-300`}>
+        {/* Card Header */}
+        <div className={`${bgColor} p-4 border-b ${borderColor}`}>
+          <div className="flex justify-between items-start">
+            <div>
+              <h3 className={`font-bold text-lg ${textColor}`}>{std.name}</h3>
+              <p className="text-xs text-slate-500">{std.subtext}</p>
+            </div>
+            <div className="text-right">
+              <div className="text-xs font-mono text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 shadow-sm inline-block">
+                CL: {std.criterionLevel} | ER: {std.exchangeRate}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Real-time Limits */}
+        <div className="p-5 flex-grow space-y-6">
+          
+          <div>
+            <p className="text-sm font-medium text-slate-500 mb-1 flex items-center gap-1">
+              <Clock className="h-4 w-4" /> Max time at {effectiveLevel} dB
+            </p>
+            <p className="text-4xl font-black text-slate-800 tracking-tight">
+              {formatTime(data.maxTime)}
+            </p>
+          </div>
+
+          <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+            <div className="flex justify-between items-end mb-2">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                Dose for {duration} min
+              </span>
+              <span className={`text-2xl font-bold ${data.currentDose > 100 ? 'text-red-600' : 'text-slate-700'}`}>
+                {data.currentDose.toFixed(1)}%
+              </span>
+            </div>
+            
+            {/* Progress Bar */}
+            <div className="h-3 w-full bg-slate-200 rounded-full overflow-hidden relative">
+               <div 
+                 className={`h-full transition-all duration-500 ${data.currentDose > 100 ? 'bg-red-500' : barColor}`} 
+                 style={{ width: `${Math.min(data.currentDose, 100)}%` }}
+               />
+            </div>
+            <div className="mt-2 text-right">
+              {data.currentDose > 100 ? (
+                <span className="text-xs font-bold text-red-600 flex items-center justify-end gap-1">
+                  Over Limit
+                </span>
+              ) : (
+                <span className="text-xs font-bold text-green-600 flex items-center justify-end gap-1">
+                  Safe
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-100 font-sans text-slate-800 p-4 md:p-8">
+      <div className="max-w-5xl mx-auto space-y-8">
+        
+        {/* Header */}
+        <header className="flex items-center gap-3">
+          <div className="bg-slate-900 text-white p-3 rounded-xl shadow-lg">
+            <Volume2 className="h-6 w-6" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Noise Principles Simulator</h1>
+            <p className="text-slate-500 text-sm">Compare OSHA vs. NIOSH safety limits</p>
+          </div>
+        </header>
+
+        {/* Main Interface */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          
+          {/* Controls Column */}
+          <div className="lg:col-span-5 space-y-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 md:p-8 space-y-8">
+              
+              {/* Source Level Slider */}
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <label className="font-bold text-slate-700 flex items-center gap-2">
+                    <Volume2 className="h-5 w-5 text-slate-400" /> Source Noise
+                  </label>
+                  <span className="text-2xl font-black text-slate-900 bg-slate-50 px-3 py-1 rounded border border-slate-200 tabular-nums min-w-[80px] text-center">
+                    {sourceLevel}<span className="text-sm font-normal text-slate-400 ml-1">dB</span>
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="60"
+                  max="140"
+                  step="1"
+                  value={sourceLevel}
+                  onChange={(e) => setSourceLevel(Number(e.target.value))}
+                  className="w-full h-3 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-900"
+                />
+                <SliderMarkers 
+                  min={60} 
+                  max={140} 
+                  markers={[
+                    { value: 60, label: 'Chat' },
+                    { value: 85, label: 'Traffic' },
+                    { value: 100, label: 'Woodshop' },
+                    { value: 115, label: 'Concert' },
+                    { value: 140, label: 'Jet' },
+                  ]} 
+                />
+              </div>
+
+              {/* Protection Slider */}
+              <div className="space-y-4 pt-6 border-t border-slate-100">
+                <div className="flex justify-between items-center">
+                  <label className="font-bold text-slate-700 flex items-center gap-2">
+                    <Shield className={`h-5 w-5 ${protection > 0 ? 'text-green-500' : 'text-slate-400'}`} /> 
+                    Hearing Protection
+                  </label>
+                  <span className="text-2xl font-black text-green-600 bg-green-50 px-3 py-1 rounded border border-green-200 tabular-nums min-w-[80px] text-center">
+                    -{protection}<span className="text-sm font-normal text-green-400 ml-1">dB</span>
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="40"
+                  step="1"
+                  value={protection}
+                  onChange={(e) => setProtection(Number(e.target.value))}
+                  className="w-full h-3 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-green-600"
+                />
+                <SliderMarkers 
+                  min={0} 
+                  max={40} 
+                  markers={[
+                    { value: 0, label: 'None' },
+                    { value: 10, label: 'Cotton' },
+                    { value: 20, label: 'Earmuffs' },
+                    { value: 30, label: 'Plugs' },
+                    { value: 35, label: 'Dual' },
+                  ]} 
+                />
+                <div className="text-xs text-slate-400 mt-6 italic">
+                  * Real-world attenuation is often less than the labelled NRR rating.
+                </div>
+              </div>
+
+              {/* Duration Slider */}
+              <div className="space-y-4 pt-4 border-t border-slate-100">
+                <div className="flex justify-between items-center">
+                  <label className="font-bold text-slate-700 flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-slate-400" /> Duration
+                  </label>
+                  <span className="text-2xl font-black text-slate-900 bg-slate-50 px-3 py-1 rounded border border-slate-200 tabular-nums min-w-[80px] text-center">
+                    {duration}<span className="text-sm font-normal text-slate-400 ml-1">m</span>
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="5"
+                  max="480"
+                  step="5"
+                  value={duration}
+                  onChange={(e) => setDuration(Number(e.target.value))}
+                  className="w-full h-3 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-900"
+                />
+                <div className="flex justify-between text-xs text-slate-400 font-medium px-1 mt-2">
+                  <span>5m</span>
+                  <span>4 hrs</span>
+                  <span>8 hrs</span>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Effective Level Readout */}
+            <div className="bg-slate-800 text-white p-4 rounded-xl shadow-lg flex justify-between items-center">
+              <div>
+                <p className="text-slate-400 text-xs uppercase tracking-wider font-bold">Effective Exposure Level</p>
+                <p className="text-xs text-slate-500">Source - Protection</p>
+              </div>
+              <div className="text-3xl font-black text-white">
+                {effectiveLevel} <span className="text-base font-normal text-slate-400">dB</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Cards Column */}
+          <div className="lg:col-span-7">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-full">
+               <StandardCard type="osha" data={stats.osha} />
+               <StandardCard type="niosh" data={stats.niosh} />
+            </div>
+          </div>
+        </div>
+
+        {/* Educational Explainer */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="bg-slate-50 p-4 border-b border-slate-200 flex items-center gap-2">
+            <BookOpen className="h-5 w-5 text-slate-500" />
+            <h2 className="font-bold text-slate-800">Principles Breakdown</h2>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+            {/* Criterion Level */}
+            <div className="p-6">
+              <div className="flex items-start gap-3 mb-3">
+                <div className="bg-orange-100 p-2 rounded-lg text-orange-600">
+                  <Volume1 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800">Criterion Level (CL)</h3>
+                  <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold mt-1">What is 100%?</p>
+                </div>
+              </div>
+              <p className="text-sm text-slate-600 leading-relaxed mb-4">
+                The constant noise level that results in 100% dose over 8 hours.
+              </p>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between p-2 bg-blue-50 rounded text-blue-800">
+                  <span className="font-semibold">OSHA CL: 90 dB</span>
+                  <span>Allows 90dB for 8 hrs</span>
+                </div>
+                <div className="flex justify-between p-2 bg-purple-50 rounded text-purple-800">
+                  <span className="font-semibold">NIOSH CL: 85 dB</span>
+                  <span>Allows 85dB for 8 hrs</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Exchange Rate */}
+            <div className="p-6">
+              <div className="flex items-start gap-3 mb-3">
+                <div className="bg-teal-100 p-2 rounded-lg text-teal-600">
+                  <RefreshCcw className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800">Exchange Rate (ER)</h3>
+                  <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold mt-1">How fast does risk grow?</p>
+                </div>
+              </div>
+              <p className="text-sm text-slate-600 leading-relaxed mb-4">
+                The decibel increase required to <span className="italic font-bold">halve</span> the allowable exposure time.
+              </p>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between p-2 bg-blue-50 rounded text-blue-800">
+                  <span className="font-semibold">OSHA ER: 5 dB</span>
+                  <span>+5dB = ½ Time</span>
+                </div>
+                <div className="flex justify-between p-2 bg-purple-50 rounded text-purple-800">
+                  <span className="font-semibold">NIOSH ER: 3 dB</span>
+                  <span>+3dB = ½ Time</span>
+                </div>
+              </div>
+              <p className="text-xs text-slate-400 mt-3">
+                *Because the dB scale is logarithmic, NIOSH's 3dB ER is significantly more protective (doubles risk with less noise increase).
+              </p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
+export default TwaCalculator;
